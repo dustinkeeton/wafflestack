@@ -31,6 +31,19 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+
+- **Read-only commit-policy inspection.** `wafflestack commit-policy` reports effective author,
+  committer, signer and exact co-author/sign-off trailers, and checks opt-in `personal`,
+  `personal-credit-agent`, `agent-credit-human` and `prepare-only` profiles. A runtime-only
+  personal global preference never enters canonical renders; repository signing requirements
+  cannot be weakened by a local override. Inspection never accesses keys, signs, commits,
+  changes configuration or grants execution authorization. Workflow guidance keeps commit
+  credit separate from PR attribution and platform participants.
+  **Consumer impact:** additive CLI/configuration and workflow guidance; re-render updates
+  installed skills and the shared identity-parser sidecar. Existing legacy defaults and
+  signing posture are unchanged. See `docs/commit-policy.md` for setup and scope.
+
 ### Removed
 
 - **The `obsidian-dev` and `expo-dev` stacks are gone.** Their agents (`plugin-architect`,

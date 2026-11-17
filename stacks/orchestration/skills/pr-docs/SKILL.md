@@ -64,6 +64,11 @@ Invoke the `docs` skill and pass the changed paths from Step 2 as its **focus**.
 
 ## Step 4 — Commit and push onto the PR branch
 
+Apply `git-workflow`'s **Commit policy inspection** before every commit-producing operation,
+including Step 1's base merge. Named profiles supersede the legacy recipe/trailer below, not
+repository requirements or execution authorization. Stop on missing signing/credit prerequisites;
+`prepare-only` hands off changes/message without committing, pushing or opening a PR.
+
 ```bash
 git status --porcelain
 ```

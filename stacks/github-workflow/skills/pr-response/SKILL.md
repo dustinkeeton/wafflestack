@@ -339,6 +339,10 @@ For each **Implement** finding, in order, following the `git-workflow` skill:
    fix: guard empty input in parseRange (F1)
    ```
 
+   Apply `git-workflow`'s **Commit policy inspection** in this checkout before committing;
+   named profiles supersede the legacy recipe/trailer, not repository requirements or execution
+   authorization. Stop on missing signing/credit prerequisites. `prepare-only` hands off the
+   changes/message without committing, pushing or opening a PR.
    Use the commit format and attribution trailer from `git-workflow` — pass the message with
    `{{git.cmd}} commit -F <message-file>` when it needs a body.
 

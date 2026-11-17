@@ -6,7 +6,48 @@ user-invocable: false
 
 # Git Workflow Standards
 
+## Commit policy inspection
+
+Repository profile (`git.commitProfile`): `{{git.commitProfile}}`. Repository signing requirement
+(`git.requireSignedCommits`): `{{git.requireSignedCommits}}`. The legacy fallback preserves the
+existing recipes below; it does not override a personal runtime preference. Before a commit-producing
+operation, use the installed, pinned Wafflestack CLI's `commit-policy --json` in that checkout.
+`--profile personal|personal-credit-agent|agent-credit-human|prepare-only` selects a proposed
+per-invocation policy, **not permission to commit**. Selection order is invocation → local overlay
+→ committed profile → user's global `wafflestack.commitProfile` preference → legacy. No profile
+ever weakens repository signing requirements. Never set this user's preference as a factory default.
+
+For a named profile, the inspected author, committer, signer and exact co-author list supersede
+the legacy examples below. Author and committer remain independent Git fields; signing and
+co-author credit are independent of both. `personal` requires human author/committer and personal
+signing with no co-authors; `personal-credit-agent` adds exactly the configured bot co-author;
+`agent-credit-human` requires bot author/committer, a distinctly user-controlled bot signing key,
+and exactly the configured human co-author. Human and bot bindings use explicitly configured
+`git.ownerName`/`git.ownerEmail` and `git.botName`/`git.botEmail`, never inferred repository owners
+or placeholder defaults. Agent overrides must be explicit; do not invent aliases for signing.
+
+Inspect the **actual** proposed recipe and trailers using `--git-cmd`, `--co-author-trailer`
+and `--sign-off-trailer` when they differ from config. Empty attribution means no co-author.
+The separately configured sign-off is `{{git.signOffTrailer}}`; Signed-off-by is an attestation,
+not a signature or co-author credit, and requires its own explicit approval. Do not copy a commit's
+attribution into a PR body or add platform participants without separate instructions.
+
+Configuration validity is not signing readiness or authorization. Stop on inspector errors or
+unresolved prerequisites: verify human email/credit consent, the user-controlled signing identity,
+distinct agent/personal public-key fingerprints, and actual signing success when execution is
+authorized. Never use the personal key as an agent signer, fall back unsigned, invent identities,
+change Git config, provision keys, or add unselected trailers. A profile/default never authorizes
+a commit; require an explicit user commit request and harness approval. `prepare-only` means prepare
+changes/message and hand execution to the human, without committing, signing, pushing or opening a PR.
+The inspector never reads keys, invokes a signer, or grants approval. Harness permissions, not this
+skill or a successful inspection, provide hard execution authorization. For merges that create a new
+commit inspect again; unsupported history-rewriting paths must be handed off rather than guessed.
+
 ## Identity
+
+The rest of this Identity section describes **legacy mode**. A named profile must pass the
+inspection above instead; do not reuse legacy trailer or identity defaults to repair a failed
+inspection. A proposed invocation override is inspectable, not an instruction to edit Git config.
 
 {{git.identitySection}}
 
@@ -131,7 +172,7 @@ git checkout -b feat/my-feature
 
 ### Rules
 
-- End every commit message with the attribution trailer shown above — agent-made commits must be traceable.
+- End every commit message with the attribution trailer shown above in legacy mode — agent-made commits must be traceable. Named profiles instead use exactly the inspected, explicitly selected trailer list, including none.
 - Pass commit messages via HEREDOC for proper formatting.
 - Stage specific files by name; avoid `git add -A` / `git add .` (risks committing secrets, generated files, or large artifacts).
 - Never skip hooks (`--no-verify`) or bypass signing unless explicitly asked. The resolved

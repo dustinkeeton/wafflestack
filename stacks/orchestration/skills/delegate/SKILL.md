@@ -304,6 +304,15 @@ The validator enforces that every issue is assigned exactly once, branch names a
 
 ### Identity preflight (deterministic gate)
 
+First resolve the runtime profile using `git-workflow`'s **Commit policy inspection**, including
+the user's personal preference. A named profile also needs that inspection in each worker's
+actual checkout/environment before any commit-producing operation. Pass the exact proposed
+recipe/trailers and agent slug; do not treat this static preflight as authorization or key
+verification. For named profiles skip the legacy identity derivation below: use the explicitly
+configured bot or per-agent override, never a synthesized display name/email for signing.
+Propagate the selected profile and exact credit policy with each assignment. `prepare-only`
+hands off changes/message without committing, pushing or opening a PR.
+
 The plan is settled and nothing has happened yet: no board writes, no worktrees, no agents. This is the last moment at which a misconfigured git identity is free to fix. **Verify it now, with a script — not by eye.**
 
 **Validator:** `{{harness.skillsDir}}/delegate/identity.mjs` — dependency-free, same idiom as `checkpoint.mjs`. Run it with the agent slugs taken **from the `plan` checkpoint's assignments** (the single source of truth — never re-derive them):

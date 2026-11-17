@@ -90,6 +90,11 @@ Run the full checklist from `git-workflow`; do not open the PR if any fail:
 
 ## 5. Commit, push, open the labeled PR
 
+Apply `git-workflow`'s **Commit policy inspection** before committing. Named profiles supersede
+the legacy command/trailer example below; they grant no execution authorization. Missing signing
+or credit prerequisites stop the release. `prepare-only` hands off changes/message without a
+commit, push or PR. Tag identity/signing is separate and is not validated by the commit inspector.
+
 ```bash
 {{git.cmd}} commit -m "$(cat <<'EOF'
 chore: bump to X.Y.Z
