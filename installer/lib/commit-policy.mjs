@@ -194,10 +194,11 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
       if (RECIPE_KEYS.has(entry) && entry !== 'commit.gpgsign' && entry !== 'tag.gpgsign' && entry !== 'user.useconfigonly') errors.push(`valueless identity or signer setting: ${entry}`);
     }
   }
+  const botBaseEmail = baseIdentity?.email ?? baseBot?.email;
   const privacyEmails = new Map();
   for (const [role, identity] of [['author', author], ['committer', committer], ...coAuthors.map((entry) => ['co-author', entry])]) {
     if (!identity || /@users\.noreply\.github\.com$/i.test(identity.email)) continue;
-    if (sameEmail(identity.email, bot?.email) && !sameEmail(identity.email, human?.email)) continue;
+    if (sameEmail(identity.email, bot?.email) && !sameEmail(identity.email, human?.email) && !sameEmail(botBaseEmail, human?.email)) continue;
     const normalizedEmail = identity.email.toLowerCase();
     const exposed = privacyEmails.get(normalizedEmail) ?? { email: identity.email, roles: new Set() };
     exposed.roles.add(role);

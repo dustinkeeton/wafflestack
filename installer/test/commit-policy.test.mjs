@@ -163,6 +163,29 @@ test('privacy notices group case-only email aliases and list each emitted role o
   assert.match(formatCommitPolicy(policy), /note: Privacy: human@example.test \(author, committer, co-author\)/);
 });
 
+test('derived agents retain privacy notices when the base recipe uses the human mailbox', (context) => {
+  const { config, inspect } = fixture(context);
+  for (const email of [human.email, human.email.toUpperCase()]) {
+    for (const botEmail of [email, bot.email, '']) {
+      config({ botName: human.name, botEmail, cmd: agentRecipe.replace(bot.email, email) });
+      const policy = inspect({ profile: 'configured', agent: 'engineer', coAuthorTrailer: '' });
+      valid(policy);
+      const derivedEmail = email.replace('@', '+engineer@');
+      assert.deepEqual(policy.author, { name: 'Engineer', email: derivedEmail });
+      assert.deepEqual(policy.committer, policy.author);
+      assert.equal(policy.signer.key, '/nonexistent/agent.pub');
+      const privacy = policy.notices.filter((notice) => notice.startsWith('Privacy:'));
+      assert.equal(privacy.length, 1);
+      assert.ok(privacy[0].startsWith(`Privacy: ${derivedEmail} (author, committer)`));
+    }
+  }
+  config({ cmd: agentRecipe });
+  const separateBot = inspect({ profile: 'configured', agent: 'engineer', coAuthorTrailer: '' });
+  valid(separateBot);
+  assert.equal(separateBot.author.email, 'automation+engineer@example.test');
+  assert.equal(separateBot.notices.some((notice) => notice.startsWith('Privacy:')), false);
+});
+
 test('noreply personal identities and unused real human bindings do not cause privacy notices', (context) => {
   const { config, global, inspect } = fixture(context);
   const email = '1234567+ExampleHuman@users.noreply.github.com';
