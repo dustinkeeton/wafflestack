@@ -51,7 +51,7 @@ entries, re-run `setup --gitignore` (idempotent).
 ## 2. Choose stacks (or individual items)
 
 Recommend stacks from the inventory based on repository signals — a GitHub remote
-suggests the GitHub-workflow stack, an Expo app the Expo stack, and so on. Present
+suggests the GitHub-workflow stack, a browser app the engineering-team stack, and so on. Present
 the recommendation with one line per stack on what it adds, and let the user pick.
 Two stacks that define a same-named item cannot both be enabled (the renderer refuses);
 the inventory shows each stack's item names.

@@ -30,7 +30,7 @@ function trailers(text, token, errors) {
   }
   if (!text.trim()) return [];
   const identities = [];
-  for (const line of text.split('\n')) {
+  for (const line of text.replace(/\r\n/g, '\n').split('\n').filter((entry) => entry.trim())) {
     const identity = line.startsWith(`${token}: `) ? parseIdentity(line.slice(token.length + 2)) : null;
     if (!identity) errors.push(`expected only ${token}: Name <email> lines`);
     else if (identities.some((entry) => sameIdentity(entry, identity))) errors.push(`duplicate ${token} identity`);
@@ -80,7 +80,7 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
   }
   const agentOverrides = lookupPath(project.values, 'git.agentIdentities') ?? {};
   if (typeof agentOverrides !== 'object' || Array.isArray(agentOverrides)) recipeErrors.push('git.agentIdentities must be a map');
-  let override = agent ? agentOverrides[agent] : null;
+  let override = agent && Object.hasOwn(agentOverrides, agent) ? agentOverrides[agent] : null;
   if (agent && !/^[a-z0-9][a-z0-9-]*$/.test(agent)) errors.push('agent must be a configured agent slug');
   if (override !== undefined && override !== null && (typeof override !== 'object' || Array.isArray(override))) recipeErrors.push('agent identity override must be a map');
   for (const field of ['botName', 'botEmail', 'signingKey']) {
@@ -105,6 +105,7 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
           const selection = computeSelection(toolkit, project);
           errors.push(...selection.errors);
           const definition = selection.items.find(({ kind, item }) => kind === 'agents' && item.name === agent)?.item;
+          if (!definition) notices.push(`Agent ${agent} is not installed by this selection; its identity is derived from the slug (check the spelling).`);
           const displayName = definition?.data.identity?.displayName;
           displayNameSource = displayName ? 'agent-definition' : 'agent-slug';
           agentIdentity = resolveAgentIdentity({ baseEmail: baseIdentity?.email, slug: agent, displayName, override: override ?? {} });
