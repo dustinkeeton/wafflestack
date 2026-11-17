@@ -13,7 +13,8 @@ const RECIPE_KEYS = new Set([
   'gpg.program', 'gpg.openpgp.program', 'gpg.ssh.program', 'gpg.x509.program',
 ]);
 const identityText = (identity) => identity ? `${identity.name} <${identity.email}>` : '(missing)';
-const sameIdentity = (left, right) => Boolean(left && right && left.name === right.name && left.email === right.email);
+const sameEmail = (left, right) => typeof left === 'string' && typeof right === 'string' && left.toLowerCase() === right.toLowerCase();
+const sameIdentity = (left, right) => Boolean(left && right && left.name === right.name && sameEmail(left.email, right.email));
 
 function parseIdentity(text) {
   const match = /^([^<>\r\n]+) <([^<>\s]+@[^<>\s]+)>$/.exec(text);
@@ -137,8 +138,8 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
     const expected = automation ? bot : human;
     const credit = selected === 'personal-credit-agent' ? bot : automation ? human : null;
     if (!expected) errors.push(`explicit configured ${automation ? 'bot' : 'human (git.ownerName / git.ownerEmail)'} identity is missing`);
-    if (!sameIdentity(author, expected)) errors.push('effective author does not match the selected profile');
-    if (!sameIdentity(committer, expected)) errors.push('effective committer does not match the selected profile');
+    if (!sameIdentity(author, expected)) errors.push(`effective author does not match the selected profile: expected ${identityText(expected)}, got ${identityText(author)}`);
+    if (!sameIdentity(committer, expected)) errors.push(`effective committer does not match the selected profile: expected ${identityText(expected)}, got ${identityText(committer)}`);
     if (!signingEnabled || !key || !program) errors.push('selected profile requires a configured signing key, format and signer; unsigned fallback is forbidden');
     if (!['ssh', 'openpgp', 'x509'].includes(format)) errors.push('unsupported signing format');
     if (selected !== 'personal' && !credit) errors.push('explicit configured co-author identity is missing');
@@ -147,7 +148,7 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
       const automationKey = override?.signingKey ?? (lookupPath(project.values, 'git.signingKey') !== undefined ? value('git.signingKey') : null);
       if (!automationKey || automationKey !== key) errors.push('effective signer must select the explicitly configured agent signing key');
       if (!recipe.has('user.signingkey') || !recipe.has('gpg.format') || !recipe.has('commit.gpgsign')) errors.push('agent signing key, format and signing posture must be pinned in git.cmd');
-      if (!human || sameIdentity(human, bot) || human.email === bot?.email) errors.push('agent and human identities must be explicitly configured and distinct');
+      if (!human || sameEmail(human.email, bot?.email)) errors.push('agent and human identities must be explicitly configured and distinct');
       if (key && key === globalValue('user.signingkey')) errors.push('agent signer references the personal global signing key');
     } else if (!key || key !== globalValue('user.signingkey')) {
       errors.push('personal profile must select the configured personal global signing key');
@@ -155,6 +156,11 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
     for (const entry of valueless) {
       if (RECIPE_KEYS.has(entry) && entry !== 'commit.gpgsign' && entry !== 'tag.gpgsign' && entry !== 'user.useconfigonly') errors.push(`valueless identity or signer setting: ${entry}`);
     }
+  }
+  for (const [role, identity] of [['author', author], ['committer', committer], ...coAuthors.map((entry) => ['co-author', entry])]) {
+    if (!identity || /@users\.noreply\.github\.com$/i.test(identity.email)) continue;
+    if (sameEmail(identity.email, bot?.email) && !sameEmail(identity.email, human?.email)) continue;
+    notices.push(`Privacy: ${role} email ${identity.email} is not a GitHub noreply address and would be public in shared commit history. Do not assume GitHub's email-privacy push protection protects Co-authored-by trailers; real addresses remain legitimate for other hosts or intentional public use.`);
   }
   const overriddenByEnvironment = ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']
     .filter((name) => env[name] !== undefined);

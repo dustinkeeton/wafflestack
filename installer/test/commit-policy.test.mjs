@@ -22,8 +22,8 @@ function fixture(context) {
   context.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_') && key !== 'EMAIL'));
   Object.assign(env, { HOME: cwd, XDG_CONFIG_HOME: cwd, GIT_CONFIG_GLOBAL: path.join(cwd, 'global'), GIT_CONFIG_SYSTEM: '/dev/null' });
-  const global = (profile) => fs.writeFileSync(env.GIT_CONFIG_GLOBAL, [
-    '[user]', `name = ${human.name}`, `email = ${human.email}`, 'signingkey = /nonexistent/human.pub',
+  const global = (profile, identity = human) => fs.writeFileSync(env.GIT_CONFIG_GLOBAL, [
+    '[user]', `name = ${identity.name}`, `email = ${identity.email}`, 'signingkey = /nonexistent/human.pub',
     '[gpg]', 'format = ssh', '[commit]', 'gpgsign = true',
     ...(profile ? ['[wafflestack]', `commitProfile = ${profile}`] : []), '',
   ].join('\n'));
@@ -55,6 +55,124 @@ function blocked(policy, diagnostic) {
   assert.equal(policy.configurationValid, false);
   assert.match(policy.errors.join('\n'), diagnostic);
 }
+
+test('personal profiles accept case-only noreply differences without changing stored identities', (context) => {
+  const { config, global, inspect } = fixture(context);
+  const configuredEmail = '1234567+ExampleHuman@users.noreply.github.com';
+  const effectiveEmail = configuredEmail.toLowerCase();
+  config({ ownerEmail: configuredEmail });
+  global(undefined, { ...human, email: effectiveEmail });
+  for (const profile of ['personal', 'personal-credit-agent']) {
+    const policy = inspect({ profile, coAuthorTrailer: profile === 'personal' ? '' : botCredit });
+    valid(policy);
+    assert.equal(policy.author.email, effectiveEmail);
+    assert.equal(policy.committer.email, effectiveEmail);
+  }
+  global(undefined, { name: human.name.toLowerCase(), email: effectiveEmail });
+  blocked(inspect({ profile: 'personal', coAuthorTrailer: '' }), /effective author does not match/);
+});
+
+test('agent profile matches case-only bot and human credit emails', (context) => {
+  const { config, inspect } = fixture(context);
+  const ownerEmail = '1234567+ExampleHuman@users.noreply.github.com';
+  config({ ownerEmail, botEmail: bot.email.toUpperCase() });
+  const coAuthorTrailer = `Co-authored-by: ${human.name} <${ownerEmail.toLowerCase()}>`;
+  const policy = inspect({ profile: 'agent-credit-human', gitCmd: agentRecipe, coAuthorTrailer });
+  valid(policy);
+  assert.equal(policy.coAuthors[0].email, ownerEmail.toLowerCase());
+  assert.equal(policy.author.email, bot.email);
+});
+
+test('case-only trailer duplicates are rejected for both credit and sign-offs', (context) => {
+  const { inspect } = fixture(context);
+  for (const [option, token] of [['coAuthorTrailer', 'Co-authored-by'], ['signOffTrailer', 'Signed-off-by']]) {
+    const email = '1234567+ExampleHuman@users.noreply.github.com';
+    blocked(inspect({ [option]: `${token}: ${human.name} <${email}>\n${token}: ${human.name} <${email.toLowerCase()}>` }), new RegExp(`duplicate ${token}`));
+  }
+});
+
+test('agent and human cannot be distinct through case-only email aliases', (context) => {
+  const { config, inspect } = fixture(context);
+  const ownerEmail = '1234567+ExampleHuman@users.noreply.github.com';
+  config({ ownerEmail, botEmail: ownerEmail.toLowerCase() });
+  const policy = inspect({ profile: 'agent-credit-human', gitCmd: agentRecipe.replace(bot.email, ownerEmail.toLowerCase()) });
+  blocked(policy, /agent and human identities must be explicitly configured and distinct/);
+  assert.doesNotMatch(policy.errors.join('\n'), /effective (author|committer) does not match/);
+});
+
+test('identity mismatch diagnostics show expected and actual values without equating noreply forms', (context) => {
+  const { config, global, inspect } = fixture(context);
+  config({ ownerEmail: '1234567+ExampleHuman@users.noreply.github.com' });
+  global(undefined, { ...human, email: 'ExampleHuman@users.noreply.github.com' });
+  const policy = inspect({ profile: 'personal', coAuthorTrailer: '' });
+  blocked(policy, /effective author does not match/);
+  for (const role of ['author', 'committer']) {
+    assert.ok(policy.errors.includes(`effective ${role} does not match the selected profile: expected Example Human <1234567+ExampleHuman@users.noreply.github.com>, got Example Human <ExampleHuman@users.noreply.github.com>`));
+  }
+  config({ ownerEmail: '' });
+  blocked(inspect({ profile: 'personal', coAuthorTrailer: '' }), /expected \(missing\), got Example Human/);
+});
+
+test('legacy and agent credit warn about public human trailers without blocking real addresses', (context) => {
+  const { config, inspect } = fixture(context);
+  config({ cmd: agentRecipe });
+  for (const profile of ['legacy', 'agent-credit-human']) {
+    const policy = inspect({ profile });
+    valid(policy);
+    const privacy = policy.notices.filter((notice) => notice.startsWith('Privacy:'));
+    assert.equal(privacy.length, 1);
+    assert.match(privacy[0], /co-author email human@example.test/);
+    assert.match(privacy[0], /public in shared commit history/);
+    assert.match(privacy[0], /Do not assume GitHub's email-privacy push protection protects Co-authored-by trailers/);
+    assert.match(formatCommitPolicy(policy), /note: Privacy:/);
+  }
+  const noreply = '1234567+ExampleHuman@USERS.NOREPLY.GITHUB.COM';
+  config({ cmd: agentRecipe, ownerEmail: noreply });
+  for (const profile of ['legacy', 'agent-credit-human']) {
+    const policy = inspect({ profile });
+    valid(policy);
+    assert.equal(policy.notices.some((notice) => notice.startsWith('Privacy:')), false);
+  }
+});
+
+test('personal profiles warn about real author and committer emails, not a separate bot credit', (context) => {
+  const { inspect } = fixture(context);
+  for (const profile of ['personal', 'personal-credit-agent']) {
+    const policy = inspect({ profile, coAuthorTrailer: profile === 'personal' ? '' : botCredit });
+    valid(policy);
+    const privacy = policy.notices.filter((notice) => notice.startsWith('Privacy:'));
+    assert.equal(privacy.length, 2);
+    assert.match(privacy[0], /author email human@example.test/);
+    assert.match(privacy[1], /committer email human@example.test/);
+  }
+});
+
+test('noreply personal identities and unused real human bindings do not cause privacy notices', (context) => {
+  const { config, global, inspect } = fixture(context);
+  const email = '1234567+ExampleHuman@users.noreply.github.com';
+  config({ ownerEmail: email });
+  global(undefined, { ...human, email });
+  for (const profile of ['personal', 'personal-credit-agent']) {
+    const policy = inspect({ profile, coAuthorTrailer: profile === 'personal' ? '' : botCredit });
+    valid(policy);
+    assert.equal(policy.notices.some((notice) => notice.startsWith('Privacy:')), false);
+  }
+  config({ cmd: agentRecipe });
+  const botOnly = inspect({ coAuthorTrailer: '' });
+  valid(botOnly);
+  assert.equal(botOnly.notices.some((notice) => notice.startsWith('Privacy:')), false);
+});
+
+test('privacy notices inspect actual ambient identities and reject lookalike noreply domains', (context) => {
+  const { config, inspect, env } = fixture(context);
+  config({ ownerEmail: '1234567+ExampleHuman@users.noreply.github.com' });
+  const policy = inspect({ coAuthorTrailer: '', env: { ...env, GIT_AUTHOR_EMAIL: 'human@users.noreply.github.com.example.test' } });
+  valid(policy);
+  const privacy = policy.notices.filter((notice) => notice.startsWith('Privacy:'));
+  assert.equal(privacy.length, 2);
+  assert.match(privacy[0], /author email human@users.noreply.github.com.example.test/);
+  assert.match(privacy[1], /committer email human@example.test/);
+});
 
 test('legacy factory selection remains unchanged and never authorizes a commit', (context) => {
   const { inspect } = fixture(context);

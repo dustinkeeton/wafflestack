@@ -41,6 +41,33 @@ separate attestation, **not** a signature or co-author credit; `git.signOffTrail
 Its inclusion needs independent approval. Selecting a crediting profile permits exactly its
 configured credit when a commit is separately authorized, not extra vendor/model credits.
 
+### Private GitHub email addresses
+
+Copy the **exact account-provided noreply address** from GitHub Settings → Emails into
+`git.ownerEmail` for the consenting human, and use the bot account's own address for
+`git.botEmail` or an explicit per-agent override. GitHub documents both ID-based
+`ID+USERNAME@users.noreply.github.com` and older `USERNAME@users.noreply.github.com` forms,
+depending on account history/settings. Do not manufacture either form, assume both identify
+the same account, or append a synthetic `+<agent-slug>` to a noreply address. See GitHub's
+[email addresses reference](https://docs.github.com/en/account-and-profile/reference/email-addresses-reference).
+The inspector compares emails case-insensitively but preserves their spelling and requires
+exact names; it does not equate different noreply forms or verify account ownership.
+
+Commit metadata and `Co-authored-by` trailers expose their addresses to anyone who can read
+the history, including the public for a public repository. Ask each co-author which address
+they consent to publish; GitHub recommends their provided noreply address for private email.
+See [creating co-authored commits](https://docs.github.com/en/pull-requests/how-tos/commit-changes/creating-a-commit-with-multiple-authors).
+GitHub's documented [email-privacy push check](https://docs.github.com/en/account-and-profile/how-tos/email-preferences/blocking-command-line-pushes-that-expose-your-personal-email-address)
+concerns the most recent commit's **author** email. Do not assume that setting protects
+co-author trailers or every address in history. The inspector adds nonblocking privacy notices
+for emitted non-noreply identities other than a separately configured bot; unused human bindings
+do not trigger them. Real addresses remain legitimate for other hosts or intentional public use.
+
+A noreply address alone does **not** guarantee a Verified signature badge or prove control of
+a signing key. GitHub's [signature verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
+is a separate check; keep account attribution, signer registration and successful cryptographic
+verification distinct. No email, key or privacy setting is changed by inspection.
+
 ## Selection and requirements
 
 Profile precedence, highest first:
