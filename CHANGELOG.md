@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-20
+
 ### Added
 
 - **`ci.runsOn` config key (github-workflow).** Sets the `runs-on:` of every job in the stack's
