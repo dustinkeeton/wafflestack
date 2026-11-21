@@ -19,7 +19,7 @@ jobs:
     # Allowlist gate: case-insensitive exact match against the configured trigger label, and
     # HUMANS ONLY — a bot-applied label never dispatches (loop defense in depth).
     if: github.event.label.name == '{{labelHook.enrichLabel}}' && github.event.sender.type != 'Bot'
-    runs-on: ubuntu-latest
+    runs-on: {{ci.runsOn}}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -69,9 +69,9 @@ jobs:
             for v in $(compgen -e); do case "$(lc "$v")" in npm_config_*) unset "$v" ;; esac; done
             scratch="$(mktemp -d)"
             err="$(mktemp)"
-            : > "$scratch/.npmrc"
+            : > "$scratch/.npmrc"; : > "$scratch/user.npmrc"; : > "$scratch/global.npmrc"
             cd "$scratch"
-            NPM_CONFIG_USERCONFIG="$scratch/.npmrc" NPM_CONFIG_GLOBALCONFIG="$scratch/.npmrc" npx --yes "$@" --cwd "$ws" 2> "$err" && rc=0 || rc=$?
+            NPM_CONFIG_USERCONFIG="$scratch/user.npmrc" NPM_CONFIG_GLOBALCONFIG="$scratch/global.npmrc" npx --yes "$@" --cwd "$ws" 2> "$err" && rc=0 || rc=$?
             cat "$err" >&2
             # A release older than --untrusted-config rejects the flag as a ref (#789).
             [ "$rc" = 0 ] || ! grep -q 'takes no refs' "$err" || fail "toolkit ${pin:-$1} predates render --untrusted-config, first shipped in v0.19.0; $fix."
@@ -289,7 +289,7 @@ jobs:
 
   implement:
     if: github.event.label.name == '{{labelHook.implementLabel}}' && github.event.sender.type != 'Bot'
-    runs-on: ubuntu-latest
+    runs-on: {{ci.runsOn}}
     timeout-minutes: 60
     # Implement pushes a branch, opens a PR, and comments — write scopes confined to this job.
     permissions:
@@ -341,9 +341,9 @@ jobs:
             for v in $(compgen -e); do case "$(lc "$v")" in npm_config_*) unset "$v" ;; esac; done
             scratch="$(mktemp -d)"
             err="$(mktemp)"
-            : > "$scratch/.npmrc"
+            : > "$scratch/.npmrc"; : > "$scratch/user.npmrc"; : > "$scratch/global.npmrc"
             cd "$scratch"
-            NPM_CONFIG_USERCONFIG="$scratch/.npmrc" NPM_CONFIG_GLOBALCONFIG="$scratch/.npmrc" npx --yes "$@" --cwd "$ws" 2> "$err" && rc=0 || rc=$?
+            NPM_CONFIG_USERCONFIG="$scratch/user.npmrc" NPM_CONFIG_GLOBALCONFIG="$scratch/global.npmrc" npx --yes "$@" --cwd "$ws" 2> "$err" && rc=0 || rc=$?
             cat "$err" >&2
             # A release older than --untrusted-config rejects the flag as a ref (#789).
             [ "$rc" = 0 ] || ! grep -q 'takes no refs' "$err" || fail "toolkit ${pin:-$1} predates render --untrusted-config, first shipped in v0.19.0; $fix."

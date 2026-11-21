@@ -19,7 +19,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'workflow_run' &&
       github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: {{ci.runsOn}}
     timeout-minutes: 5
     permissions:
       actions: read
@@ -61,7 +61,7 @@ jobs:
     concurrency:
       group: waffle-pr-response-hook-${{ github.repository }}-pr-${{ needs.resolve.outputs.pr_number }}
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: {{ci.runsOn}}
     timeout-minutes: 45
     # Deliberately NOT issues: write — the skill's Defer path would file follow-ups, but issue
     # creation widens the blast radius of a harness holding `Bash(gh api:*)`.
@@ -215,9 +215,9 @@ jobs:
             for v in $(compgen -e); do case "$(lc "$v")" in npm_config_*) unset "$v" ;; esac; done
             scratch="$(mktemp -d)"
             err="$(mktemp)"
-            : > "$scratch/.npmrc"
+            : > "$scratch/.npmrc"; : > "$scratch/user.npmrc"; : > "$scratch/global.npmrc"
             cd "$scratch"
-            NPM_CONFIG_USERCONFIG="$scratch/.npmrc" NPM_CONFIG_GLOBALCONFIG="$scratch/.npmrc" npx --yes "$@" --cwd "$ws" 2> "$err" && rc=0 || rc=$?
+            NPM_CONFIG_USERCONFIG="$scratch/user.npmrc" NPM_CONFIG_GLOBALCONFIG="$scratch/global.npmrc" npx --yes "$@" --cwd "$ws" 2> "$err" && rc=0 || rc=$?
             cat "$err" >&2
             # A release older than --untrusted-config rejects the flag as a ref (#789).
             [ "$rc" = 0 ] || ! grep -q 'takes no refs' "$err" || fail "toolkit ${pin:-$1} predates render --untrusted-config, first shipped in v0.19.0; $fix."

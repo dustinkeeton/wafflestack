@@ -1876,6 +1876,26 @@ config:
       forces the gate, `--yes` skips it. A non-interactive caller — CI, a subagent with no human on
       its turn — skips the gate (`nonInteractive: false`): that is the skill's standing "When called
       by agents" rule, now a declared property of the key.
+  ci.runsOn:
+    required: false
+    default: ubuntu-latest
+    pattern: '[A-Za-z0-9][A-Za-z0-9_.-]*|\[ ?[A-Za-z0-9][A-Za-z0-9_.-]*( ?, ?[A-Za-z0-9][A-Za-z0-9_.-]*)* ?\]'
+    patternHint: >-
+      runs-on must be one runner label (`ubuntu-latest`) or a YAML flow list of labels
+      (`[self-hosted, linux, nas]`), quoted in waffle.yaml as a string. Labels are letters,
+      digits, `_`, `.` and `-`; no quotes, `${{`, newlines or other YAML.
+    description: >-
+      The `runs-on:` value of EVERY job in this stack's workflows (doctor, label-hook, hygiene,
+      release, post-merge, evals, pr-green, pr-response), rendered verbatim. Default
+      `ubuntu-latest`: GitHub's hosted runner. Set it to a single label, or to a flow list QUOTED
+      as a string (`runsOn: '[self-hosted, linux, nas]'`) to send the jobs to your own runner,
+      e.g. to keep a private repo off billed hosted minutes. An unquoted YAML list is refused
+      with a "must be a string" error rather than flattened. The pattern allows only label
+      characters, so a value cannot inject YAML or an expression into the workflow. NEVER point
+      a PUBLIC repo at a self-hosted runner: any fork's pull request can then run code on that
+      machine. Self-hosted runners belong on private repos only. The runner must have `bash`,
+      `git`, and `node`/`npx` (the setup-node step in doctor installs node itself), and the
+      Claude-dispatch hooks need whatever claude-code-action needs.
   doctor.toolkitRef:
     required: false
     default: github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}
