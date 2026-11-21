@@ -3,9 +3,9 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.21.0 (2026-11-17; pre-1.0 — the file contract can still change between minor releases).
-- **Last updated**: 2026-11-17
-- **Health**: 🟢 tests 2338 in 311 suites (2336 pass, 2 skipped by design, #445) · `validate` clean · `main` at `841d1fd` (PR #872's merge) + the #873 audit
+- **Version**: v0.22.0 (2026-11-20; pre-1.0 — the file contract can still change between minor releases).
+- **Last updated**: 2026-11-20
+- **Health**: 🟢 tests 2340 in 311 suites (2338 pass, 2 skipped by design, #445) · `validate` clean · `main` at `eb9a90f` (PR #875's merge)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 Worktree preparation ships in v0.20.0; see the
@@ -20,6 +20,10 @@ New in v0.21.0: the read-only `wafflestack commit-policy` inspector
 ([docs/commit-policy.md](docs/commit-policy.md), #872); `render`/`install` no longer warn
 about un-installed opt-in syrup (#869); the `obsidian-dev` and `expo-dev` stacks were
 removed (#870, breaking for a consumer that names them — see CHANGELOG).
+
+New in v0.22.0: the `ci.runsOn` config key sets `runs-on:` for every github-workflow job, so
+a private repo can use its own runner (#875); the hook workflows no longer fail under npm 11
+before doing anything (#875).
 
 ## Stacks
 
