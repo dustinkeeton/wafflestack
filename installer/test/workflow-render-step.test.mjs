@@ -171,7 +171,7 @@ describe('waffle-render step behavior (#615)', () => {
     // Records what npm itself would see from npx's cwd, then renders into --cwd like the real CLI.
     exe(path.join(bin, 'npx'), [
       'echo "npx $*" >> "$LOG"',
-      `node -e 'console.log("npx-env " + JSON.stringify({ pwd: process.cwd(), entries: require("fs").readdirSync("."), registry: process.argv[1], git: process.env.npm_config_git ?? null, upper: process.env.NPM_CONFIG_SCRIPT_SHELL ?? null }))' "$(${REAL_NPM} config get registry)" >> "$LOG"`,
+      `node -e 'console.log("npx-env " + JSON.stringify({ pwd: process.cwd(), entries: require("fs").readdirSync("."), registry: process.argv[1], git: process.env.npm_config_git ?? null, upper: process.env.NPM_CONFIG_SCRIPT_SHELL ?? null, userconfig: process.env.NPM_CONFIG_USERCONFIG ?? null, globalconfig: process.env.NPM_CONFIG_GLOBALCONFIG ?? null }))' "$(${REAL_NPM} config get registry)" >> "$LOG"`,
       '[ -z "${NPX_STDERR:-}" ] || { echo "$NPX_STDERR" >&2; exit 1; }',
       'while [ $# -gt 0 ]; do [ "$1" = --cwd ] && d="$2"; shift; done',
       `cd "$d" && ${fakeRender}`,
@@ -274,8 +274,12 @@ describe('waffle-render step behavior (#615)', () => {
     const [seen] = r.npx;
     assert.notEqual(seen.pwd, cwd);
     assert.ok(!seen.pwd.startsWith(cwd + path.sep), seen.pwd);
-    assert.deepEqual(seen.entries, ['.npmrc']);
-    assert.equal(fs.readFileSync(path.join(seen.pwd, '.npmrc'), 'utf8'), '');
+    // project, user and global npmrc: all empty, all in the scratch dir. User and global must be
+    // DIFFERENT files: npm 11 refuses to load one file as both ("double-loading config").
+    assert.deepEqual([...seen.entries].sort(), ['.npmrc', 'global.npmrc', 'user.npmrc']);
+    for (const f of seen.entries) assert.equal(fs.readFileSync(path.join(seen.pwd, f), 'utf8'), '', f);
+    assert.equal(fs.realpathSync(seen.userconfig), fs.realpathSync(path.join(seen.pwd, 'user.npmrc')));
+    assert.equal(fs.realpathSync(seen.globalconfig), fs.realpathSync(path.join(seen.pwd, 'global.npmrc')));
     assert.doesNotMatch(seen.registry, /evil\.invalid/);
     assert.equal(seen.git, null);
     assert.equal(seen.upper, null);
