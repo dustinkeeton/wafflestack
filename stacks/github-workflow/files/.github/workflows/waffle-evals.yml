@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   evals:
-    runs-on: ubuntu-latest
+    runs-on: {{ci.runsOn}}
     timeout-minutes: 30
     permissions:
       contents: read

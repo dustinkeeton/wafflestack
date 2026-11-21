@@ -31,6 +31,27 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+
+- **`ci.runsOn` config key (github-workflow).** Sets the `runs-on:` of every job in the stack's
+  workflows (doctor, label-hook, hygiene, release, post-merge, evals, pr-green, pr-response).
+  The default is `ubuntu-latest`, so nothing changes unless you set it. A private repo can now
+  send these jobs to its own runner instead of billed hosted minutes:
+  `ci: { runsOn: '[self-hosted, linux, nas]' }` (quote a list; an unquoted YAML list is refused).
+  The value is limited to runner-label characters, so it cannot inject YAML or an expression.
+  Never use a self-hosted runner on a public repo: a fork's pull request could run code on it.
+
+### Fixed
+
+- **Hook workflows failed under npm 11 before doing anything.** The sandboxed `npx` in the
+  "Render missing wafflestack resources" step (hygiene, label-hook, pr-green, pr-response) pointed
+  `NPM_CONFIG_USERCONFIG` and `NPM_CONFIG_GLOBALCONFIG` at the same empty file, and npm 11
+  refuses that ("double-loading config … as "global", previously loaded as "user""). They now
+  point at two separate empty files, with the same isolation. The toolkit's own scheduled
+  `waffle-hygiene` had failed this way on every run.
+
+Consumer impact: plain re-render. Repos that use the hook workflows get the npm fix on render.
+
 ## [0.21.0] - 2026-11-17
 
 ### Added

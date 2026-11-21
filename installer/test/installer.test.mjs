@@ -3916,6 +3916,49 @@ describe('github-workflow: waffle-hygiene payload (#46)', () => {
     rejects(`    claudeArgs: '--append-system-prompt "x"'`, 'hygiene.claudeArgs');
   });
 
+  test('H3b ci.runsOn sets every job runner (default ubuntu-latest); hostile or unquoted values fail the render', () => {
+    const runsOn = (rel) => Object.values(YAML.parse(read(cwd, rel)).jobs).map((j) => j['runs-on']);
+    const withRunsOn = (line) =>
+      writeConfig(`targets: [claude]\nstacks: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n${line}`);
+
+    // default: GitHub-hosted, unchanged for every existing consumer
+    withRunsOn('');
+    assert.equal(render().ok, true);
+    assert.deepEqual(runsOn(REL), ['ubuntu-latest']);
+    assert.deepEqual(runsOn(DOCTOR_REL), ['ubuntu-latest']);
+
+    // a single label, and a quoted flow list that YAML parses back into a label list
+    withRunsOn(`  ci:\n    runsOn: ubuntu-24.04\n`);
+    assert.equal(render().ok, true);
+    assert.deepEqual(runsOn(REL), ['ubuntu-24.04']);
+    withRunsOn(`  ci:\n    runsOn: '[self-hosted, linux, nas]'\n`);
+    assert.equal(render().ok, true);
+    assert.deepEqual(runsOn(REL), [['self-hosted', 'linux', 'nas']]);
+    assert.deepEqual(runsOn(DOCTOR_REL), [['self-hosted', 'linux', 'nas']]);
+
+    const rejects = (value, why) => {
+      withRunsOn(`  ci:\n    runsOn: ${value}\n`);
+      const r = render();
+      assert.equal(r.ok, false, `render must fail on ${value}`);
+      assert.ok(r.errors.some((e) => e.includes('ci.runsOn') && why.test(e)), JSON.stringify(r.errors));
+    };
+    rejects(`'\${{ github.event.inputs.x }}'`, /does not match its declared pattern/);
+    rejects(`"ubuntu-latest\\n    steps: []"`, /does not match its declared pattern/);
+    rejects(`"{ group: x }"`, /does not match its declared pattern/);
+    rejects(`''`, /does not match its declared pattern/);
+    // an unquoted YAML list is refused, not flattened into "self-hosted, linux"
+    rejects(`[self-hosted, linux]`, /must be a string/);
+  });
+
+  test('H3c sandboxed npx gets distinct user and global npmrc files (npm 11 refuses to load one file twice)', () => {
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    const wf = read(cwd, REL);
+    const m = wf.match(/NPM_CONFIG_USERCONFIG="([^"]+)" NPM_CONFIG_GLOBALCONFIG="([^"]+)"/);
+    assert.ok(m, 'npx_render sets both npmrc paths');
+    assert.notEqual(m[1], m[2], 'user and global npmrc must be different files');
+  });
+
   test('H4 syrup: stack-only render omits the file (skill still renders); explicit include pours it', () => {
     // stacks:[github-workflow] alone → the sensitive workflow is NOT written…
     writeConfig(`targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
